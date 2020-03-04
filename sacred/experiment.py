@@ -61,6 +61,7 @@ class Experiment(Ingredient):
         additional_host_info: Optional[List[HostInfoGetter]] = None,
         additional_cli_options: Optional[Sequence[CLIOption]] = None,
         save_git_info: bool = True,
+        default_mainfile_assignment=True,
     ):
         """
         Create a new experiment with the given name and optional ingredients.
@@ -100,22 +101,32 @@ class Experiment(Ingredient):
         self.all_cli_options = (
             gather_command_line_options() + self.additional_cli_options
         )
-        caller_globals = inspect.stack()[1][0].f_globals
-        if name is None:
-            if interactive:
-                raise RuntimeError("name is required in interactive mode.")
-            mainfile = caller_globals.get("__file__")
-            if mainfile is None:
+        if default_mainfile_assignment:
+            caller_globals = inspect.stack()[1][0].f_globals
+            if name is None:
+                if interactive:
+                    raise RuntimeError("name is required in interactive mode.")
+                mainfile = caller_globals.get("__file__")
+                if mainfile is None:
+                    raise RuntimeError(
+                        "No main-file found. Are you running in "
+                        "interactive mode? If so please provide a "
+                        "name and set interactive=True."
+                    )
+                name = os.path.basename(mainfile)
+                if name.endswith(".py"):
+                    name = name[:-3]
+                elif name.endswith(".pyc"):
+                    name = name[:-4]
+        else:
+            if name is None or interactive:
                 raise RuntimeError(
-                    "No main-file found. Are you running in "
-                    "interactive mode? If so please provide a "
-                    "name and set interactive=True."
+                    "Using a custom mainfile assignment is only allowed in "
+                    "non interactive mode and with an explicit "
+                    "experiment name."
                 )
-            name = os.path.basename(mainfile)
-            if name.endswith(".py"):
-                name = name[:-3]
-            elif name.endswith(".pyc"):
-                name = name[:-4]
+            caller_globals = None
+
         super().__init__(
             path=name,
             ingredients=ingredients,
@@ -123,6 +134,7 @@ class Experiment(Ingredient):
             base_dir=base_dir,
             _caller_globals=caller_globals,
             save_git_info=save_git_info,
+            default_mainfile_assignment=default_mainfile_assignment,
         )
         self.default_command = None
         self.command(print_config, unobserved=True)

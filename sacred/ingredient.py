@@ -20,6 +20,8 @@ from sacred.dependencies import (
 )
 from sacred.utils import CircularDependencyError, optional_kwargs_decorator, join_paths
 
+from sacred import SETTINGS
+
 __all__ = ("Ingredient",)
 
 
@@ -50,6 +52,7 @@ class Ingredient:
         _caller_globals: Optional[dict] = None,
         base_dir: Optional[PathType] = None,
         save_git_info: bool = True,
+        default_mainfile_assignment=True,
     ):
         self.path = path
         self.config_hooks = []
@@ -62,26 +65,69 @@ class Ingredient:
         self.pre_run_hooks = []
         self._is_traversing = False
         self.commands = OrderedDict()
-        # capture some context information
-        _caller_globals = _caller_globals or inspect.stack()[1][0].f_globals
+        self.save_git_info = save_git_info
+
+        if default_mainfile_assignment:
+            # capture some context information
+            _caller_globals = _caller_globals or inspect.stack()[1][0].f_globals
+            self.discover_sources_and_dependencies(_caller_globals, base_dir=base_dir)
+            if self.mainfile is None and not interactive:
+                raise RuntimeError(
+                    "Defining an experiment in interactive mode! "
+                    "The sourcecode cannot be stored and the "
+                    "experiment won't be reproducible. If you still"
+                    " want to run it pass interactive=True"
+                )
+
+        else:
+            if interactive:
+                raise RuntimeError(
+                    "Non default mainfile assignment is only"
+                    "supported in non-interactive mode."
+                )
+
+            self.base_dir = None
+            self.doc = None
+            self.mainfile = None
+            self.sources = None
+            self.dependencies = None
+
+    def discover_sources_and_dependencies(self, _caller_globals, base_dir=None):
         mainfile_dir = os.path.dirname(_caller_globals.get("__file__", "."))
         self.base_dir = os.path.abspath(base_dir or mainfile_dir)
-        self.save_git_info = save_git_info
         self.doc = _caller_globals.get("__doc__", "")
         (
             self.mainfile,
             self.sources,
             self.dependencies,
         ) = gather_sources_and_dependencies(
-            _caller_globals, save_git_info, self.base_dir
+            _caller_globals, self.save_git_info, self.base_dir
         )
-        if self.mainfile is None and not interactive:
-            raise RuntimeError(
-                "Defining an experiment in interactive mode! "
-                "The sourcecode cannot be stored and the "
-                "experiment won't be reproducible. If you still"
-                " want to run it pass interactive=True"
-            )
+
+    def declare_base_source(self, _caller_globals=None, base_dir=None):
+        """Run this function in the experiment's main file to declare it as such.
+
+        Parameters
+        ----------
+        _caller_globals: Either None or dict
+            global namespace dictionnary of the desired mainfile
+
+        Notes
+        -----
+        Source discovery is performed by looking up the modules in the global namespace f_globals or
+        that of the frame where this function is called. A module is registed if either
+        - it is imported in the namespace
+        - an object in the namespace has it as its __module__
+        As a result, in order to ensure that a module is properly registered as a source it should be
+        imported by itself (as opposed to importing specific objects inside)
+        """
+        assert SETTINGS["DISCOVER_SOURCES"] == "imported", (
+            "Non default mainfile assignment is only"
+            "supported with the 'imported' source discovery mode."
+        )
+
+        _caller_globals = _caller_globals or inspect.stack()[1][0].f_globals
+        self.discover_sources_and_dependencies(_caller_globals, base_dir=base_dir)
 
     # =========================== Decorators ==================================
     @optional_kwargs_decorator
